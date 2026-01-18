@@ -1,0 +1,75 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum HabitPeriod {
+  DAILY
+  WEEKLY
+}
+
+enum LogSource {
+  WHATSAPP
+  SYSTEM
+}
+
+model User {
+  id         String      @id @default(cuid())
+  phone      String      @unique
+  name       String?
+  timezone   String      @default("UTC")
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  logs       HabitLog[]
+  goals      Goal[]
+  reminders  Reminder[]
+}
+
+model HabitLog {
+  id        String    @id @default(cuid())
+  userId    String
+  habit     String    @default("pushups")
+  count     Int       @db.UnsignedInt
+  loggedAt  DateTime  @default(now())
+  source    LogSource @default(WHATSAPP)
+  note      String?
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, habit, loggedAt])
+  @@index([userId, loggedAt])
+}
+
+model Goal {
+  id          String      @id @default(cuid())
+  userId      String
+  habit       String
+  targetCount Int         @db.UnsignedInt
+  period      HabitPeriod
+  startDate   DateTime
+  endDate     DateTime?
+  active      Boolean     @default(true)
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, habit, period, startDate])
+  @@index([userId, period, active])
+}
+
+model Reminder {
+  id          String   @id @default(cuid())
+  userId      String
+  habit       String?
+  cron        String
+  timezone    String   @default("UTC")
+  windowStart String?  @db.VarChar(8) // optional HH:mm local window start
+  windowEnd   String?  @db.VarChar(8) // optional HH:mm local window end
+  lastSentAt  DateTime?
+  active      Boolean  @default(true)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, active])
+}
+
