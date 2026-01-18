@@ -103,9 +103,11 @@ export default async function webhookController(fastify: FastifyInstance) {
     fastify.log.info({ phone, text }, 'Incoming WhatsApp message');
 
     const intent = intentParser.parse(text);
+    fastify.log.info({ intent }, 'Parsed intent');
 
     if (intent.intent === 'LOG_HABIT' && intent.count && intent.habit) {
       try {
+        fastify.log.info({ phone, habit: intent.habit, count: intent.count }, 'Logging habit...');
         const result = await habitService.logHabit({
           phone,
           displayName,
@@ -113,24 +115,39 @@ export default async function webhookController(fastify: FastifyInstance) {
           count: intent.count,
           source: 'WHATSAPP',
         });
+        fastify.log.info({ result }, 'Habit logged successfully');
 
         const replyText = `Logged ${intent.count} ${intent.habit}. Today total: ${result.todayTotal}.`;
+        fastify.log.info({ replyText }, 'Sending WhatsApp reply...');
         await waService.sendText(phone, replyText);
+        fastify.log.info('Reply sent successfully');
       } catch (error) {
-        fastify.log.error({ err: error }, 'Failed to log habit');
-        await waService.sendText(phone, 'Sorry, we could not log that right now.');
+        fastify.log.error({ err: error }, 'Failed to log habit or send reply');
+        try {
+          await waService.sendText(phone, 'Sorry, we could not log that right now.');
+        } catch (sendError) {
+          fastify.log.error({ err: sendError }, 'Failed to send error message');
+        }
       }
     } else if (intent.intent === 'GET_STATS' && intent.habit) {
-      const user = await habitRepository.upsertUserByPhone(phone, displayName);
-      const total =
-        intent.period === 'week'
-          ? await statsService.getWeekTotal({ userId: user.id, habit: intent.habit, timezone: user.timezone })
-          : await statsService.getTodayTotal({ userId: user.id, habit: intent.habit, timezone: user.timezone });
+      try {
+        const user = await habitRepository.upsertUserByPhone(phone, displayName);
+        const total =
+          intent.period === 'week'
+            ? await statsService.getWeekTotal({ userId: user.id, habit: intent.habit, timezone: user.timezone })
+            : await statsService.getTodayTotal({ userId: user.id, habit: intent.habit, timezone: user.timezone });
 
-      const periodLabel = intent.period === 'week' ? 'this week' : 'today';
-      await waService.sendText(phone, `You have logged ${total} ${intent.habit} ${periodLabel}.`);
+        const periodLabel = intent.period === 'week' ? 'this week' : 'today';
+        await waService.sendText(phone, `You have logged ${total} ${intent.habit} ${periodLabel}.`);
+      } catch (error) {
+        fastify.log.error({ err: error }, 'Failed to get stats or send reply');
+      }
     } else {
-      await waService.sendText(phone, 'Please send a number to log your habit (e.g., "30").');
+      try {
+        await waService.sendText(phone, 'Please send a number to log your habit (e.g., "30").');
+      } catch (error) {
+        fastify.log.error({ err: error }, 'Failed to send unknown intent reply');
+      }
     }
 
     return reply.status(200).send({ received: true });
