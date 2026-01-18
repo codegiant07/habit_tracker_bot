@@ -54,28 +54,29 @@ export default async function webhookController(fastify: FastifyInstance) {
   const statsService = new StatsService(habitRepository);
   const waService = new WhatsAppService(whatsappConfig, fastify.log);
 
-  // Health/metadata endpoint for quick readiness checks.
-  fastify.get('/', async () => ({
-    status: 'webhook-ready',
-    verifyTokenConfigured: Boolean(env.WHATSAPP_VERIFY_TOKEN),
-  }));
+  // Meta/WhatsApp verification + health check at the same endpoint.
+  // Meta sends GET with hub.* params for verification; otherwise returns status.
+  fastify.get('/', async (request, reply) => {
+    const parsed = verifyQuerySchema.safeParse(request.query);
+    const mode = parsed.data?.['hub.mode'];
+    const token = parsed.data?.['hub.verify_token'];
+    const challenge = parsed.data?.['hub.challenge'];
 
-  // Meta/WhatsApp verification: echoes back hub.challenge when token matches.
-  fastify.get('/verify', async (request, reply) => {
-    const parsed = verifyQuerySchema.parse(request.query);
-    const mode = parsed['hub.mode'];
-    const token = parsed['hub.verify_token'];
-    const challenge = parsed['hub.challenge'];
-
-    const isValid = mode === 'subscribe' && token === env.WHATSAPP_VERIFY_TOKEN && Boolean(challenge);
-
-    if (isValid) {
-      fastify.log.info('WhatsApp webhook verified');
-      return reply.type('text/plain').send(challenge);
+    // If verification params present, handle Meta webhook verification
+    if (mode === 'subscribe' && token && challenge) {
+      if (token === env.WHATSAPP_VERIFY_TOKEN) {
+        fastify.log.info('WhatsApp webhook verified');
+        return reply.type('text/plain').send(challenge);
+      }
+      fastify.log.warn({ mode, tokenProvided: Boolean(token) }, 'Invalid WhatsApp webhook verification attempt');
+      return reply.status(403).send({ error: 'Invalid verify token' });
     }
 
-    fastify.log.warn({ mode, tokenProvided: Boolean(token) }, 'Invalid WhatsApp webhook verification attempt');
-    return reply.status(403).send({ error: 'Invalid verify token' });
+    // Otherwise return health/status
+    return {
+      status: 'webhook-ready',
+      verifyTokenConfigured: Boolean(env.WHATSAPP_VERIFY_TOKEN),
+    };
   });
 
   // Primary webhook receiver; parses message, logs, and responds via WhatsApp API.
